@@ -40,7 +40,7 @@ vector<vector<double>> initialization(int SearchAgents_no, int dim, vector<doubl
     int Boundary_no = ub.size(); // Number of boundaries
 
     // Initialize random seed
-    srand(time(nullptr)+rank);
+    srand((rank+1) * (rank+1));
 
     vector<vector<double>> Positions(SearchAgents_no, vector<double>(dim));
 
@@ -74,7 +74,7 @@ vector<vector<double>> levy(int n, int m, double beta, int Iter) {
     double num = tgamma(1 + beta) * sin(M_PI * beta / 2);
     double den = tgamma((1 + beta) / 2) * beta * pow(2, (beta - 1) / 2);
     double sigma_u = pow(num / den, 1 / beta);
-
+    srand(static_cast<unsigned int>(std::time(nullptr)));
     // Initialize random number generators
     random_device rd;
     mt19937 gen(rd());
@@ -199,14 +199,14 @@ map<string, ObjectiveFunction> objectiveFunctions = {
 };
 
 // Function to perform the Marine Predators Algorithm (MPA)
-void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, vector<double>& lb, int Max_iter, double CF, double FADs, double P, int rank, string objectiveFunctionName) {
+void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, vector<double>& lb, int Max_iter, double CF, double FADs, double P, int rank, string objectiveFunctionName, double& Top_predator_fit, vector<double>& Top_predator_pos) {
     // Initialize search agents
     vector<vector<double>> Prey = initialization(SearchAgents_no, dim, ub, lb, rank);
     // MPA algorithm
-    vector<double> Top_predator_pos(dim);
-    double Top_predator_fit = numeric_limits<double>::infinity();
+    Top_predator_pos.resize(dim);
+    Top_predator_fit = numeric_limits<double>::infinity();
     vector<double> Convergence_curve(Max_iter);
-
+    srand((rank+1) * (rank+1));
     // Variables for memory saving
     vector<vector<double>> Prey_old = Prey;
     vector<double> fit_old(SearchAgents_no, numeric_limits<double>::infinity());
@@ -225,15 +225,15 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
     // Open a text file to write the convergence data
     string filename = objectiveFunctionName + "_MaxIter_" + to_string((int)Max_iter) + "_Dim_" + to_string((int)dim) + "_LB_" + to_string((int)lb[0]) + "_UB_" + to_string((int)ub[0]) + ".csv";
     
-    ofstream outfile(filename);
-    if (!outfile.is_open()) {
-        cerr << "Error opening output file!" << endl;
-        return;
-    }
+    // ofstream outfile(filename);
+    // if (!outfile.is_open()) {
+    //     cerr << "Error opening output file!" << endl;
+    //     return;
+    // }
 
     // Write headers to the file
-    outfile << "Function Name,Max Iteration,Dimension,Lower Bounds,Upper Bounds" << endl;
-    outfile << objectiveFunctionName << "," << Max_iter << "," << dim << "," << lb[0] << "," << ub[0] << endl;
+    // outfile << "Function Name,Max Iteration,Dimension,Lower Bounds,Upper Bounds" << endl;
+    // outfile << objectiveFunctionName << "," << Max_iter << "," << dim << "," << lb[0] << "," << ub[0] << endl;
 
     // Main loop
     int Iter = 0;
@@ -369,20 +369,20 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
 	            }
 	        }
 	    }
-	    outfile << Iter << "," << Top_predator_fit << endl;
+	    // outfile << Iter << "," << Top_predator_fit << endl;
         Iter++;
         Convergence_curve[Iter] = Top_predator_fit;
     }
 
     // Output results
-    cout << "Top predator fitness: " << Top_predator_fit << endl;
-    cout << "Top predator position: ";
-    for (double pos : Top_predator_pos) {
-        cout << pos <<setprecision(20)<< " ";
-    }
+    // cout << "Top predator fitness: " << Top_predator_fit << endl;
+    // cout << "Top predator position: ";
+    // for (double pos : Top_predator_pos) {
+    //     cout << pos <<setprecision(20)<< " ";
+    // }
      // Close the file after writing all data
-    outfile.close();
-    cout<<endl;
+    // outfile.close();
+    // cout<<endl;
 
     // cout << "Convergence curve:" << endl;
     // for (int i = 0; i < Max_iter; ++i) {
@@ -390,18 +390,20 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
     // }
 }
 
+double global_min_fitness;
+
 int main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv); // Initialize MPI
     int world_rank, world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank); // Get the rank of the current process
     MPI_Comm_size(MPI_COMM_WORLD, &world_size); // Get the total number of processes
-
+    
     // Parameters for MPA algorithm
-    int SearchAgents_no = 100; // Number of search agents
+    int SearchAgents_no = 20; // Number of search agents
     int dim = 50;              // Dimension of the problem
     vector<double> ub(dim, 50); // Upper bounds
     vector<double> lb(dim, -50);    // Lower bounds
-    int Max_iter = 100;      // Maximum number of iterations
+    int Max_iter = 1000;      // Maximum number of iterations
     double CF = 0.5;          // Constant factor for Phase 2
     double FADs = 0.2;        // FADs effect probability
     double P = 0.5;           // Constant factor for Phase 1
@@ -418,9 +420,19 @@ int main(int argc, char* argv[]) {
     if (world_rank == world_size - 1) {
         end_index += remainder;
     }
-    
+    vector<double> Top_predator_pos;
+    double Top_predator_fit;
     // Perform MPA only for the assigned portion of search agents
-    MarinePredatorsAlgorithm(end_index - start_index, dim, ub, lb, Max_iter, CF, FADs, P, world_rank, objectiveFunctionName);
+    MarinePredatorsAlgorithm(end_index - start_index, dim, ub, lb, Max_iter, CF, FADs, P, world_rank, objectiveFunctionName, Top_predator_fit, Top_predator_pos);
+
+    // Reduce the minimum fitness value across all processors
+    double local_min_fitness = Top_predator_fit;
+    MPI_Reduce(&local_min_fitness, &global_min_fitness, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+
+    // Display the global minimum fitness value on the root process
+    if (world_rank == 0) {
+        cout << "Global Minimum Fitness: " << global_min_fitness << endl;
+    }
 
     MPI_Finalize(); // Finalize MPI
     return 0;
