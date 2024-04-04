@@ -199,7 +199,7 @@ map<string, ObjectiveFunction> objectiveFunctions = {
 };
 
 // Function to perform the Marine Predators Algorithm (MPA)
-void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, vector<double>& lb, int Max_iter, double CF, double FADs, double P, int rank, string objectiveFunctionName, double& Top_predator_fit, vector<double>& Top_predator_pos) {
+void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, vector<double>& lb, int Max_iter, double CF, double FADs, double P, int rank, int world_size, string objectiveFunctionName, double& Top_predator_fit, vector<double>& Top_predator_pos) {
     // Initialize search agents
     vector<vector<double>> Prey = initialization(SearchAgents_no, dim, ub, lb, rank);
     // MPA algorithm
@@ -225,15 +225,15 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
     // Open a text file to write the convergence data
     string filename = objectiveFunctionName + "_MaxIter_" + to_string((int)Max_iter) + "_Dim_" + to_string((int)dim) + "_LB_" + to_string((int)lb[0]) + "_UB_" + to_string((int)ub[0]) + ".csv";
     
-    // ofstream outfile(filename);
-    // if (!outfile.is_open()) {
-    //     cerr << "Error opening output file!" << endl;
-    //     return;
-    // }
-
+    ofstream outfile(filename);
+    if (!outfile.is_open()) {
+        cerr << "Error opening output file!" << endl;
+        return;
+    }
+    
     // Write headers to the file
-    // outfile << "Function Name,Max Iteration,Dimension,Lower Bounds,Upper Bounds" << endl;
-    // outfile << objectiveFunctionName << "," << Max_iter << "," << dim << "," << lb[0] << "," << ub[0] << endl;
+    outfile << "Function Name,Max Iteration,Dimension,Lower Bounds,Upper Bounds" << endl;
+    outfile << objectiveFunctionName << "," << Max_iter << "," << dim << "," << lb[0] << "," << ub[0] << endl;
 
     // Main loop
     int Iter = 0;
@@ -369,25 +369,62 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
 	            }
 	        }
 	    }
-	    // outfile << Iter << "," << Top_predator_fit << endl;
+	    outfile << Iter << "," << Top_predator_fit << endl;
+
+        // Logic to shuffle Prey between processors based on specific iterations
+        if (Iter % 10 == 0 && Iter != 0) {
+            auto p1 = Prey;
+            // Flatten the 2D vector into a 1D array
+            std::vector<double> flat_Prey(SearchAgents_no * dim);
+            for (int i = 0; i < SearchAgents_no; ++i) {
+                for (int j = 0; j < dim; ++j) {
+                    flat_Prey[i * dim + j] = Prey[i][j];
+                }
+            }
+
+            // Gather the Prey arrays from all processes to the root process
+            std::vector<double> flat_AllPrey;
+
+            if (rank == 0) {
+                flat_AllPrey.resize(SearchAgents_no * dim * world_size); // Resize AllPrey on the root process
+            }
+
+            MPI_Gather(flat_Prey.data(), SearchAgents_no * dim, MPI_DOUBLE, flat_AllPrey.data(), SearchAgents_no * dim, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            vector<vector<double>> AllPrey;
+            if (rank == 0) {
+                AllPrey.resize(world_size * SearchAgents_no, std::vector<double>(dim));
+                for (int i = 0; i < world_size * SearchAgents_no; ++i) {
+                    for (int j = 0; j < dim; ++j) {
+                        AllPrey[i][j] = flat_AllPrey[i * dim + j];
+                    }
+                }
+                std::random_device rd;
+                std::mt19937 gen(rd());
+                std::shuffle(AllPrey.begin(), AllPrey.end(), gen);      
+
+                // // Flatten the shuffled AllPrey vector back into a 1D array
+                for (int i = 0; i < world_size * SearchAgents_no; ++i) {
+                    for (int j = 0; j < dim; ++j) {
+                        flat_AllPrey[i * dim + j] = AllPrey[i][j];
+                    }
+                }
+            }
+
+            // Scatter the shuffled AllPrey vector back to each process
+            MPI_Scatter(flat_AllPrey.data(), SearchAgents_no * dim, MPI_DOUBLE, flat_Prey.data(), SearchAgents_no * dim, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+            // Reshape the 1D array back into a 2D vector on each process
+            for (int i = 0; i < SearchAgents_no; ++i) {
+                for (int j = 0; j < dim; ++j) {
+                    Prey[i][j] = flat_Prey[i * dim + j];
+                }
+            }
+        }      
+        // Increment iteration count
         Iter++;
         Convergence_curve[Iter] = Top_predator_fit;
     }
-
-    // Output results
-    // cout << "Top predator fitness: " << Top_predator_fit << endl;
-    // cout << "Top predator position: ";
-    // for (double pos : Top_predator_pos) {
-    //     cout << pos <<setprecision(20)<< " ";
-    // }
-     // Close the file after writing all data
-    // outfile.close();
-    // cout<<endl;
-
-    // cout << "Convergence curve:" << endl;
-    // for (int i = 0; i < Max_iter; ++i) {
-    //     cout << Convergence_curve[i] << " ";
-    // }
+    outfile.close();
 }
 
 double global_min_fitness;
@@ -399,11 +436,11 @@ int main(int argc, char* argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &world_size); // Get the total number of processes
     
     // Parameters for MPA algorithm
-    int SearchAgents_no = 20; // Number of search agents
+    int SearchAgents_no = 200; // Number of search agents
     int dim = 50;              // Dimension of the problem
     vector<double> ub(dim, 50); // Upper bounds
     vector<double> lb(dim, -50);    // Lower bounds
-    int Max_iter = 1000;      // Maximum number of iterations
+    int Max_iter = 10000;      // Maximum number of iterations
     double CF = 0.5;          // Constant factor for Phase 2
     double FADs = 0.2;        // FADs effect probability
     double P = 0.5;           // Constant factor for Phase 1
@@ -423,7 +460,7 @@ int main(int argc, char* argv[]) {
     vector<double> Top_predator_pos;
     double Top_predator_fit;
     // Perform MPA only for the assigned portion of search agents
-    MarinePredatorsAlgorithm(end_index - start_index, dim, ub, lb, Max_iter, CF, FADs, P, world_rank, objectiveFunctionName, Top_predator_fit, Top_predator_pos);
+    MarinePredatorsAlgorithm(end_index - start_index, dim, ub, lb, Max_iter, CF, FADs, P, world_rank, world_size, objectiveFunctionName, Top_predator_fit, Top_predator_pos);
 
     // Reduce the minimum fitness value across all processors
     double local_min_fitness = Top_predator_fit;
