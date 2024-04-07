@@ -1,8 +1,10 @@
 #include <bits/stdc++.h>
+#include <chrono>
 #include <vector>
 #include <random>
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <mpi.h>
 using namespace std;
 #define trace1(x)                cerr<<#x<<": "<<x<<endl
@@ -397,7 +399,7 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
                     for (int j = 0; j < dim; ++j) {
                         AllPrey[i][j] = flat_AllPrey[i * dim + j];
                     }
-                }
+                } 
                 std::random_device rd;
                 std::mt19937 gen(rd());
                 std::shuffle(AllPrey.begin(), AllPrey.end(), gen);      
@@ -434,17 +436,17 @@ int main(int argc, char* argv[]) {
     int world_rank, world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank); // Get the rank of the current process
     MPI_Comm_size(MPI_COMM_WORLD, &world_size); // Get the total number of processes
-    
+
     // Parameters for MPA algorithm
     int SearchAgents_no = 200; // Number of search agents
     int dim = 50;              // Dimension of the problem
     vector<double> ub(dim, 50); // Upper bounds
     vector<double> lb(dim, -50);    // Lower bounds
-    int Max_iter = 10000;      // Maximum number of iterations
+    int Max_iter = 500;      // Maximum number of iterations
     double CF = 0.5;          // Constant factor for Phase 2
     double FADs = 0.2;        // FADs effect probability
     double P = 0.5;           // Constant factor for Phase 1
-    
+
     string objectiveFunctionName = "F1";
 
     // Divide the workload among processes
@@ -457,6 +459,13 @@ int main(int argc, char* argv[]) {
     if (world_rank == world_size - 1) {
         end_index += remainder;
     }
+
+    // Start the timer
+    std::chrono::high_resolution_clock::time_point start;
+    if (world_rank == 0) {
+        start = std::chrono::high_resolution_clock::now();
+    }
+
     vector<double> Top_predator_pos;
     double Top_predator_fit;
     // Perform MPA only for the assigned portion of search agents
@@ -466,9 +475,12 @@ int main(int argc, char* argv[]) {
     double local_min_fitness = Top_predator_fit;
     MPI_Reduce(&local_min_fitness, &global_min_fitness, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
 
-    // Display the global minimum fitness value on the root process
+    // Stop the timer and calculate the elapsed time
     if (world_rank == 0) {
-        cout << "Global Minimum Fitness: " << global_min_fitness << endl;
+        std::chrono::high_resolution_clock::time_point stop = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(stop - start);
+        std::cout << "Execution time: " << time_span.count() << " seconds.\n";
+        std::cout << "Global Minimum Fitness: " << global_min_fitness << endl;
     }
 
     MPI_Finalize(); // Finalize MPI
