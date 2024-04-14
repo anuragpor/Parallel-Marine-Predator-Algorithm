@@ -438,7 +438,7 @@ int main(int argc, char* argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &world_size); // Get the total number of processes
 
     // Parameters for MPA algorithm
-    int SearchAgents_no = 200; // Number of search agents
+    int SearchAgents_no = 2000; // Number of search agents
     int dim = 50;              // Dimension of the problem
     vector<double> ub(dim, 50); // Upper bounds
     vector<double> lb(dim, -50);    // Lower bounds
@@ -461,10 +461,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Start the timer
-    std::chrono::high_resolution_clock::time_point start;
-    if (world_rank == 0) {
-        start = std::chrono::high_resolution_clock::now();
-    }
+    std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
 
     vector<double> Top_predator_pos;
     double Top_predator_fit;
@@ -476,10 +473,17 @@ int main(int argc, char* argv[]) {
     MPI_Reduce(&local_min_fitness, &global_min_fitness, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
 
     // Stop the timer and calculate the elapsed time
+    std::chrono::high_resolution_clock::time_point stop = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(stop - start);
+    double local_time = time_span.count();
+
+    // Reduce the maximum execution time across all processors
+    double max_time;
+    MPI_Reduce(&local_time, &max_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    // Print the maximum execution time and global minimum fitness on the root process
     if (world_rank == 0) {
-        std::chrono::high_resolution_clock::time_point stop = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(stop - start);
-        std::cout << "Execution time: " << time_span.count() << " seconds.\n";
+        std::cout << "Maximum execution time: " << max_time << " seconds.\n";
         std::cout << "Global Minimum Fitness: " << global_min_fitness << endl;
     }
 
