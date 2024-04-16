@@ -71,25 +71,24 @@ vector<vector<double>> initialization(int SearchAgents_no, int dim, vector<doubl
 }
 
 // Function to generate Levy steps
-vector<vector<double>> levy(int n, int m, double beta, int Iter) {
-    // Constants for Levy distribution calculation
-    double num = tgamma(1 + beta) * sin(M_PI * beta / 2);
-    double den = tgamma((1 + beta) / 2) * beta * pow(2, (beta - 1) / 2);
-    double sigma_u = pow(num / den, 1 / beta);
-    srand(static_cast<unsigned int>(std::time(nullptr)));
-    // Initialize random number generators
-    random_device rd;
-    mt19937 gen(rd());
-    // mt19937 gen(Iter); // change it
-    normal_distribution<double> normal_dist(0.0, sigma_u);
+std::vector<std::vector<double>> levy(int n, int m, double beta, int Iter) {
+    std::mt19937 generator((Iter+1) * (Iter+1)); // Mersenne Twister generator
 
-    // Generate random numbers according to Levy distribution
-    vector<vector<double>> z(n, vector<double>(m));
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < m; ++j) {
-            double u = normal_dist(gen);
-            double v = normal_dist(gen);
-            z[i][j] = (u * 0.05) / pow(abs(v), 1 / beta);
+    double num = std::tgamma(1+beta) * sin(M_PI*beta/2); // Numerator
+    double den = std::tgamma((1+beta)/2) * beta * pow(2, (beta-1)/2); // Denominator
+    double sigma_u = pow(num/den, 1/beta); // Standard deviation
+
+    std::normal_distribution<double> distribution_u(0, sigma_u);
+    std::normal_distribution<double> distribution_v(0, 1);
+
+    std::vector<std::vector<double>> z(n, std::vector<double>(m));
+
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < m; j++) {
+            double u = distribution_u(generator);
+            double v = distribution_v(generator);
+            z[i][j] = u / pow(abs(v), 1/beta);
+            z[i][j] *= 0.05;
         }
     }
     return z;
@@ -128,7 +127,6 @@ double F8(const std::vector<double> x) {
 double F9(const std::vector<double> x) {
     int dim = x.size();
     double sum = 0.0;
-
     for (int i = 0; i < dim; ++i) {
         sum += std::pow(x[i], 2) - 10 * std::cos(2 * M_PI * x[i]);
     }
@@ -213,10 +211,6 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
     vector<vector<double>> Prey_old = Prey;
     vector<double> fit_old(SearchAgents_no, numeric_limits<double>::infinity());
     
-    // Initialize Xmin and Xmax matrices
-    std::vector<std::vector<double>> Xmin(SearchAgents_no, std::vector<double>(dim, lb[0]));
-    std::vector<std::vector<double>> Xmax(SearchAgents_no, std::vector<double>(dim, ub[0]));
-
     // Get the objective function pointer based on the input function name
     ObjectiveFunction fobj = objectiveFunctions[objectiveFunctionName];
     if (fobj == nullptr) {
@@ -239,6 +233,9 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
 
     // Main loop
     int Iter = 0;
+    default_random_engine generator;
+    std::random_device rd;
+    std::mt19937 gen(rd() + rank);
     while (Iter < Max_iter) {
         vector<double> Fitness;
         // Fitness evaluation and update top predator
@@ -262,7 +259,7 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
             Prey_old = Prey;
         }
         for (int i = 0; i < SearchAgents_no; ++i) {
-            if (fit_old[i] < fobj(Prey[i])) {
+            if (fit_old[i] < Fitness[i]) {
                 Prey[i] = Prey_old[i];
                 Fitness[i] = fit_old[i];
             }
@@ -272,13 +269,11 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
         fit_old = Fitness;
 
         // Foraging behavior simulation
-        vector<vector<double>> Elite(SearchAgents_no, Top_predator_pos); // Eq. 10
         CF = pow(1 - (Iter*1.0) / (1.0*Max_iter), (2.0 * Iter) / Max_iter);        // Eq. 9
-        
         vector<vector<double>> RL = levy(SearchAgents_no, dim, 1.5, Iter); // Levy random number vector
         vector<vector<double>> RB(SearchAgents_no, vector<double>(dim)); // Brownian random number vector
         
-        default_random_engine generator;
+        
         normal_distribution<double> distribution(0.0, 1.0); // Mean = 0, Standard Deviation = 1
         
         for (int i = 0; i < SearchAgents_no; ++i) {
@@ -287,29 +282,31 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
             }
         }
         P = 0.5;
+        
+        std::uniform_real_distribution<> dis(0.0, 1.0);
         vector<vector<double>> stepsize(SearchAgents_no, vector<double>(dim));
         for (int i = 0; i < SearchAgents_no; ++i) {
             for (int j = 0; j < dim; ++j) {
-                double R = (static_cast<double>(rand()) / RAND_MAX);
+                double R = dis(gen);
                 // Phase 1 (Eq.12)
                 if (Iter < (Max_iter*1.0) / 3) {
-                    stepsize[i][j] = RB[i][j] * (Elite[i][j] - RB[i][j] * Prey[i][j]);
+                    stepsize[i][j] = RB[i][j] * (Top_predator_pos[j] - RB[i][j] * Prey[i][j]);
                     Prey[i][j] += P * R * stepsize[i][j];
                 }
                 // Phase 2 (Eqs. 13 & 14)
                 else if (Iter*3 > Max_iter && Iter*3 < (2 * Max_iter)) {
-                    if (i*2 > SearchAgents_no) {
-                        stepsize[i][j] = RB[i][j] * (RB[i][j] * Elite[i][j] - Prey[i][j]);
-                        Prey[i][j] = Elite[i][j] + P * CF * stepsize[i][j];
+                    if ((i+1)*2 > SearchAgents_no) {
+                        stepsize[i][j] = RB[i][j] * (RB[i][j] * Top_predator_pos[j] - Prey[i][j]);
+                        Prey[i][j] = Top_predator_pos[j] + P * CF * stepsize[i][j];
                     } else {
-                        stepsize[i][j] = RL[i][j] * (Elite[i][j] - RL[i][j] * Prey[i][j]);
+                        stepsize[i][j] = RL[i][j] * (Top_predator_pos[j] - RL[i][j] * Prey[i][j]);
                         Prey[i][j] += P * R * stepsize[i][j];
                     }
                 }
                 // Phase 3 (Eq. 15)
                 else {
-                    stepsize[i][j] = RL[i][j] * (RL[i][j] * Elite[i][j] - Prey[i][j]);
-                    Prey[i][j] = Elite[i][j] + P * CF * stepsize[i][j];
+                    stepsize[i][j] = RL[i][j] * (RL[i][j] * Top_predator_pos[j] - Prey[i][j]);
+                    Prey[i][j] = Top_predator_pos[j] + P * CF * stepsize[i][j];
                 }
             }
         }
@@ -338,39 +335,34 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
                 Fitness[i] = fit_old[i];
             }
         }
+
         fit_old = Fitness;
         Prey_old = Prey;
 
-        std::random_device rd;
-	    std::mt19937 gen(rd());
-	    std::uniform_real_distribution<double> dist(0.0, 1.0);
-	    // Eddy formation and FADs' effect
-	    if (dist(gen) < FADs) {
-	        std::vector<std::vector<double>> U(SearchAgents_no, std::vector<double>(dim));
-	        for (int i = 0; i < SearchAgents_no; ++i) {
-	            for (int j = 0; j < dim; ++j) {
-	                U[i][j] = dist(gen) < FADs ? 1.0 : 0.0;
-	            }
-	        }
-	        for (int i = 0; i < SearchAgents_no; ++i) {
-	            for (int j = 0; j < dim; ++j) {
-	                Prey[i][j] += CF * ((Xmin[i][j] + dist(gen) * (Xmax[i][j] - Xmin[i][j])) * U[i][j]);
-	            }
-	        }
-	    } else {
-	        double r = dist(gen);
-	        int Rs = Prey.size();
-	        for (int i = 0; i < SearchAgents_no; ++i) {
-	            std::shuffle(Prey.begin(), Prey.end(), gen);
-	            std::vector<double> stepsize(dim);
-	            for (int j = 0; j < dim; ++j) {
-	                stepsize[j] = (FADs * (1 - r) + r) * (Prey[i][j] - Prey[i][j]);
-	            }
-	            for (int j = 0; j < dim; ++j) {
-	                Prey[i][j] += stepsize[j];
-	            }
-	        }
-	    }
+        // Eddy formation and FADs' effect
+	    if (dis(generator) < FADs) {
+            std::vector<std::vector<double>> U(SearchAgents_no, std::vector<double>(dim));
+            for (int i = 0; i < SearchAgents_no; ++i) {
+                for (int j = 0; j < dim; ++j) {
+                    U[i][j] = dis(generator) < FADs;
+                    double val = CF * ((lb[j] + dis(generator) * (ub[j] - lb[j])) * U[i][j]);
+                    Prey[i][j] += val;
+                }
+            }   
+        } 
+        else {
+            double r = dis(generator);
+            std::vector<int> indices(SearchAgents_no);
+            std::iota(indices.begin(), indices.end(), 0); // Fill with 0, 1, ..., SearchAgents_no-1
+            std::shuffle(indices.begin(), indices.end(), generator); // Randomly permute indices
+            int Rs = Prey.size();
+            for (int i = 0; i < SearchAgents_no; ++i) {
+                for (int j = 0; j < dim; ++j) {
+                    double stepsize = (FADs * (1 - r) + r) * (Prey[indices[i]][j] - Prey[indices[(i+1)%Rs]][j]);
+                    Prey[i][j] += stepsize;
+                }
+            }
+        }
 	    outfile << Iter << "," << Top_predator_fit << endl;
 
         // Logic to shuffle Prey between processors based on specific iterations
@@ -383,7 +375,6 @@ void MarinePredatorsAlgorithm(int SearchAgents_no, int dim, vector<double>& ub, 
                     flat_Prey[i * dim + j] = Prey[i][j];
                 }
             }
-
             // Gather the Prey arrays from all processes to the root process
             std::vector<double> flat_AllPrey;
 
@@ -438,11 +429,11 @@ int main(int argc, char* argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &world_size); // Get the total number of processes
 
     // Parameters for MPA algorithm
-    int SearchAgents_no = 2000; // Number of search agents
+    int SearchAgents_no = 500; // Number of search agents
     int dim = 50;              // Dimension of the problem
     vector<double> ub(dim, 50); // Upper bounds
     vector<double> lb(dim, -50);    // Lower bounds
-    int Max_iter = 500;      // Maximum number of iterations
+    int Max_iter = 1000;      // Maximum number of iterations
     double CF = 0.5;          // Constant factor for Phase 2
     double FADs = 0.2;        // FADs effect probability
     double P = 0.5;           // Constant factor for Phase 1
@@ -470,7 +461,14 @@ int main(int argc, char* argv[]) {
 
     // Reduce the minimum fitness value across all processors
     double local_min_fitness = Top_predator_fit;
-    MPI_Reduce(&local_min_fitness, &global_min_fitness, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Allreduce(&local_min_fitness, &global_min_fitness, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+
+    // Find the process that has the global_min_fitness
+    int min_fitness_rank = (local_min_fitness == global_min_fitness) ? world_rank : -1;
+    MPI_Allreduce(MPI_IN_PLACE, &min_fitness_rank, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+
+    // Broadcast the Top_predator_pos from the process that has the global_min_fitness to all other processes
+    MPI_Bcast(&Top_predator_pos[0], dim, MPI_DOUBLE, min_fitness_rank, MPI_COMM_WORLD);
 
     // Stop the timer and calculate the elapsed time
     std::chrono::high_resolution_clock::time_point stop = std::chrono::high_resolution_clock::now();
@@ -485,6 +483,11 @@ int main(int argc, char* argv[]) {
     if (world_rank == 0) {
         std::cout << "Maximum execution time: " << max_time << " seconds.\n";
         std::cout << "Global Minimum Fitness: " << global_min_fitness << endl;
+        std::cout << "Corresponding Top Predator Position: ";
+        for (int i = 0; i < dim; i++) {
+            std::cout << Top_predator_pos[i] << " ";
+        }
+        std::cout << endl;
     }
 
     MPI_Finalize(); // Finalize MPI
